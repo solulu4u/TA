@@ -1,42 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Play, Pause, RotateCcw, Check, ArrowRight, Volume2 } from 'lucide-react';
+import { ArrowLeft, Play, Pause, RotateCcw, Check, ArrowRight, Volume2, Mic, Square, SkipForward, Eye, EyeOff } from 'lucide-react';
 import { useProgress } from '../../contexts/ProgressContext';
 import { dictationLessonsData } from '../../data/dictationLessons';
 
-// Levenshtein Distance algorithm
-const levenshteinDistance = (str1: string, str2: string): number => {
-  const matrix = [];
-  
-  for (let i = 0; i <= str2.length; i++) {
-    matrix[i] = [i];
-  }
-  
-  for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
-  }
-  
-  for (let i = 1; i <= str2.length; i++) {
-    for (let j = 1; j <= str1.length; j++) {
-      if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1
-        );
-      }
-    }
-  }
-  
-  return matrix[str2.length][str1.length];
-};
-
-// Word-by-word comparison with color coding
-const compareWords = (userText: string, correctText: string) => {
-  const userWords = userText.toLowerCase().split(/\s+/).filter(word => word.length > 0);
-  const correctWords = correctText.toLowerCase().split(/\s+/).filter(word => word.length > 0);
+// Enhanced word comparison with character-level analysis
+const compareWordsDetailed = (userText: string, correctText: string) => {
+  const userWords = userText.toLowerCase().trim().split(/\s+/).filter(word => word.length > 0);
+  const correctWords = correctText.toLowerCase().trim().split(/\s+/).filter(word => word.length > 0);
   
   const result = [];
   const maxLength = Math.max(userWords.length, correctWords.length);
@@ -45,22 +16,56 @@ const compareWords = (userText: string, correctText: string) => {
     const userWord = userWords[i] || '';
     const correctWord = correctWords[i] || '';
     
-    if (userWord === correctWord) {
-      result.push({ word: userWord, status: 'correct' });
-    } else if (userWord && correctWord) {
-      // Check if words are similar (allowing for minor typos)
-      const distance = levenshteinDistance(userWord, correctWord);
-      const similarity = 1 - (distance / Math.max(userWord.length, correctWord.length));
-      
-      if (similarity >= 0.7) {
-        result.push({ word: userWord, status: 'close', correct: correctWord });
-      } else {
-        result.push({ word: userWord, status: 'incorrect', correct: correctWord });
-      }
-    } else if (userWord) {
-      result.push({ word: userWord, status: 'extra' });
+    if (!userWord && correctWord) {
+      // Missing word
+      result.push({
+        userWord: '',
+        correctWord,
+        status: 'missing',
+        characters: []
+      });
+    } else if (userWord && !correctWord) {
+      // Extra word
+      result.push({
+        userWord,
+        correctWord: '',
+        status: 'extra',
+        characters: userWord.split('').map(char => ({ char, status: 'extra' }))
+      });
+    } else if (userWord === correctWord) {
+      // Perfect match
+      result.push({
+        userWord,
+        correctWord,
+        status: 'correct',
+        characters: userWord.split('').map(char => ({ char, status: 'correct' }))
+      });
     } else {
-      result.push({ word: correctWord, status: 'missing' });
+      // Character-level comparison for similar words
+      const characters = [];
+      const maxCharLength = Math.max(userWord.length, correctWord.length);
+      
+      for (let j = 0; j < maxCharLength; j++) {
+        const userChar = userWord[j] || '';
+        const correctChar = correctWord[j] || '';
+        
+        if (!userChar && correctChar) {
+          characters.push({ char: correctChar, status: 'missing', isCorrect: false });
+        } else if (userChar && !correctChar) {
+          characters.push({ char: userChar, status: 'extra', isCorrect: false });
+        } else if (userChar === correctChar) {
+          characters.push({ char: userChar, status: 'correct', isCorrect: true });
+        } else {
+          characters.push({ char: userChar, status: 'incorrect', isCorrect: false, correctChar });
+        }
+      }
+      
+      result.push({
+        userWord,
+        correctWord,
+        status: 'partial',
+        characters
+      });
     }
   }
   
@@ -83,6 +88,11 @@ const DictationLesson: React.FC = () => {
   const [feedback, setFeedback] = useState<any>(null);
   const [playCount, setPlayCount] = useState(0);
   const [wordComparison, setWordComparison] = useState<any[]>([]);
+  const [showCorrectAnswer, setShowCorrectAnswer] = useState(false);
+  const [pronunciationEnabled, setPronunciationEnabled] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [pronunciationFeedback, setPronunciationFeedback] = useState<string>('');
+  const [showPronunciationSection, setShowPronunciationSection] = useState(false);
 
   useEffect(() => {
     if (lesson && !progress) {
@@ -116,7 +126,6 @@ const DictationLesson: React.FC = () => {
     setCurrentTime(0);
     setPlayCount(prev => prev + 1);
     
-    // Simulate audio playback
     const duration = lesson.dictationSentences[currentSentence].duration;
     setTimeout(() => {
       setIsPlaying(false);
@@ -128,50 +137,48 @@ const DictationLesson: React.FC = () => {
     if (!userTranscript.trim() || !lesson.dictationSentences) return;
     
     const correctText = lesson.dictationSentences[currentSentence].text;
-    const comparison = compareWords(userTranscript, correctText);
+    const comparison = compareWordsDetailed(userTranscript, correctText);
     setWordComparison(comparison);
     
-    // Calculate accuracy score
-    const correctWords = comparison.filter(w => w.status === 'correct').length;
-    const totalWords = correctText.split(/\s+/).length;
-    const accuracy = (correctWords / totalWords) * 100;
-    
-    // Calculate Levenshtein distance for overall similarity
-    const distance = levenshteinDistance(userTranscript.toLowerCase(), correctText.toLowerCase());
-    const maxLength = Math.max(userTranscript.length, correctText.length);
-    const similarity = ((maxLength - distance) / maxLength) * 100;
-    
-    const score = Math.max(0, Math.min(10, (accuracy * 0.7 + similarity * 0.3) / 10));
+    // Calculate if all words are correct
+    const allWordsCorrect = comparison.every(word => word.status === 'correct');
     
     const aiFeedback = {
-      score,
-      accuracy,
-      similarity,
-      correctWords,
-      totalWords,
-      distance,
-      feedback: accuracy >= 90 ? 'Excellent accuracy!' : 
-                accuracy >= 70 ? 'Good job! Minor errors detected.' :
-                accuracy >= 50 ? 'Fair attempt. Focus on listening more carefully.' :
-                'Keep practicing. Try listening multiple times.',
-      suggestions: accuracy < 90 ? [
-        'Listen to the audio multiple times',
-        'Focus on individual words',
-        'Pay attention to punctuation'
-      ] : []
+      allCorrect: allWordsCorrect,
+      comparison
     };
     
     setFeedback(aiFeedback);
     setShowFeedback(true);
+    
+    // Show pronunciation section if all words are correct and pronunciation is enabled
+    if (allWordsCorrect && pronunciationEnabled) {
+      setShowPronunciationSection(true);
+    }
     
     addAttempt(lessonId!, {
       sentenceIndex: currentSentence,
       userAnswer: userTranscript,
       correctAnswer: correctText,
       aiFeedback,
-      score,
+      score: allWordsCorrect ? 10 : 5,
       attemptNumber: 1,
       createdAt: new Date()
+    });
+  };
+
+  const handleSkip = () => {
+    if (!lesson.dictationSentences) return;
+    
+    const correctText = lesson.dictationSentences[currentSentence].text;
+    setShowCorrectAnswer(true);
+    setShowFeedback(true);
+    
+    // Show the correct answer without user input
+    setFeedback({
+      allCorrect: false,
+      skipped: true,
+      correctAnswer: correctText
     });
   };
 
@@ -184,8 +191,10 @@ const DictationLesson: React.FC = () => {
       setPlayCount(0);
       setWordComparison([]);
       setCurrentTime(0);
+      setShowCorrectAnswer(false);
+      setShowPronunciationSection(false);
+      setPronunciationFeedback('');
     } else {
-      // Navigate back to the category page
       navigate(`/dashboard/dictation/${lesson.category}`);
     }
   };
@@ -195,23 +204,60 @@ const DictationLesson: React.FC = () => {
     setCurrentTime(0);
   };
 
+  const startPronunciationRecording = () => {
+    setIsRecording(true);
+    // Simulate recording for 3 seconds
+    setTimeout(() => {
+      setIsRecording(false);
+      // Simulate backend response with pronunciation feedback
+      // Example: "01110" means H(0), E(1), L(1), L(1), O(0) - where 1 is correct, 0 is incorrect
+      const mockPronunciationResult = "01110"; // Example for "HELLO"
+      setPronunciationFeedback(mockPronunciationResult);
+    }, 3000);
+  };
+
+  const getCharacterColor = (status: string) => {
+    switch (status) {
+      case 'correct': return 'bg-green-100 text-green-800';
+      case 'incorrect': return 'bg-red-100 text-red-800';
+      case 'extra': return 'bg-purple-100 text-purple-800';
+      case 'missing': return 'bg-gray-100 text-gray-800 opacity-50';
+      default: return 'text-slate-600';
+    }
+  };
+
+  const getWordBorderColor = (status: string) => {
+    switch (status) {
+      case 'correct': return 'border-green-300';
+      case 'partial': return 'border-yellow-300';
+      case 'extra': return 'border-purple-300';
+      case 'missing': return 'border-gray-300';
+      default: return 'border-slate-300';
+    }
+  };
+
+  const renderPronunciationFeedback = (word: string, feedback: string) => {
+    return word.split('').map((char, index) => {
+      const isCorrect = feedback[index] === '1';
+      return (
+        <span
+          key={index}
+          className={`inline-block px-1 py-0.5 mx-0.5 rounded text-sm font-mono ${
+            isCorrect ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+          }`}
+        >
+          {char}
+        </span>
+      );
+    });
+  };
+
   if (!lesson || !lesson.dictationSentences) {
     return <div>Lesson not found</div>;
   }
 
   const currentDictation = lesson.dictationSentences[currentSentence];
   const progressPercentage = ((currentSentence + 1) / lesson.dictationSentences.length) * 100;
-
-  const getWordColor = (status: string) => {
-    switch (status) {
-      case 'correct': return 'text-green-600 bg-green-100';
-      case 'close': return 'text-yellow-600 bg-yellow-100';
-      case 'incorrect': return 'text-red-600 bg-red-100';
-      case 'extra': return 'text-purple-600 bg-purple-100';
-      case 'missing': return 'text-gray-600 bg-gray-100';
-      default: return 'text-slate-600';
-    }
-  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-pink-50">
@@ -291,6 +337,29 @@ const DictationLesson: React.FC = () => {
               <span>•</span>
               <span>Duration: {currentDictation.duration}s</span>
             </div>
+
+            {/* Settings */}
+            <div className="flex items-center justify-center space-x-6 pt-4 border-t border-slate-200">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pronunciationEnabled}
+                  onChange={(e) => setPronunciationEnabled(e.target.checked)}
+                  className="w-4 h-4 text-pink-600 border-slate-300 rounded focus:ring-pink-500"
+                />
+                <span className="text-sm text-slate-700">Enable Pronunciation Check</span>
+              </label>
+              
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={showCorrectAnswer}
+                  onChange={(e) => setShowCorrectAnswer(e.target.checked)}
+                  className="w-4 h-4 text-pink-600 border-slate-300 rounded focus:ring-pink-500"
+                />
+                <span className="text-sm text-slate-700">Show Correct Answer</span>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -308,14 +377,24 @@ const DictationLesson: React.FC = () => {
             />
 
             {!showFeedback ? (
-              <button
-                onClick={handleCheck}
-                disabled={!userTranscript.trim()}
-                className="w-full bg-gradient-to-r from-pink-600 to-rose-600 text-white py-3 px-6 rounded-lg hover:from-pink-700 hover:to-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2"
-              >
-                <Check className="w-5 h-5" />
-                <span>Check Transcript</span>
-              </button>
+              <div className="flex space-x-3">
+                <button
+                  onClick={handleCheck}
+                  disabled={!userTranscript.trim()}
+                  className="flex-1 bg-gradient-to-r from-pink-600 to-rose-600 text-white py-3 px-6 rounded-lg hover:from-pink-700 hover:to-rose-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 flex items-center justify-center space-x-2"
+                >
+                  <Check className="w-5 h-5" />
+                  <span>Check Transcript</span>
+                </button>
+                
+                <button
+                  onClick={handleSkip}
+                  className="px-6 py-3 bg-slate-500 text-white rounded-lg hover:bg-slate-600 transition-all duration-200 flex items-center justify-center space-x-2"
+                >
+                  <SkipForward className="w-5 h-5" />
+                  <span>Skip</span>
+                </button>
+              </div>
             ) : (
               <button
                 onClick={handleNext}
@@ -331,97 +410,120 @@ const DictationLesson: React.FC = () => {
         {/* Feedback */}
         {showFeedback && feedback && (
           <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h4 className="text-lg font-semibold text-slate-800">Accuracy Analysis</h4>
-              <span className="bg-pink-600 text-white px-3 py-1 rounded-lg text-sm font-bold">
-                {feedback.score.toFixed(1)}/10
-              </span>
-            </div>
+            <h4 className="text-lg font-semibold text-slate-800 mb-4">
+              {feedback.skipped ? 'Correct Answer' : 'Your Answer Analysis'}
+            </h4>
 
-            {/* Statistics */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <div className="text-center p-3 bg-green-50 rounded-lg">
-                <div className="text-lg font-bold text-green-600">{feedback.accuracy.toFixed(1)}%</div>
-                <div className="text-xs text-green-700">Word Accuracy</div>
+            {feedback.skipped ? (
+              <div className="bg-blue-50 rounded-lg p-4">
+                <p className="text-blue-800 font-medium text-lg">{feedback.correctAnswer}</p>
               </div>
-              <div className="text-center p-3 bg-blue-50 rounded-lg">
-                <div className="text-lg font-bold text-blue-600">{feedback.similarity.toFixed(1)}%</div>
-                <div className="text-xs text-blue-700">Overall Similarity</div>
-              </div>
-              <div className="text-center p-3 bg-purple-50 rounded-lg">
-                <div className="text-lg font-bold text-purple-600">{feedback.correctWords}/{feedback.totalWords}</div>
-                <div className="text-xs text-purple-700">Correct Words</div>
-              </div>
-              <div className="text-center p-3 bg-orange-50 rounded-lg">
-                <div className="text-lg font-bold text-orange-600">{feedback.distance}</div>
-                <div className="text-xs text-orange-700">Edit Distance</div>
-              </div>
-            </div>
-
-            {/* Word-by-word comparison */}
-            <div className="space-y-4">
-              <h5 className="font-medium text-slate-700">Word-by-word Analysis:</h5>
-              
-              <div className="bg-slate-50 rounded-lg p-4">
-                <div className="text-sm text-slate-600 mb-2">Your transcript:</div>
-                <div className="flex flex-wrap gap-1">
-                  {wordComparison.map((word, index) => (
-                    <span
-                      key={index}
-                      className={`px-2 py-1 rounded text-sm font-medium ${getWordColor(word.status)}`}
-                      title={word.correct ? `Correct: ${word.correct}` : ''}
-                    >
-                      {word.word || '[missing]'}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-slate-50 rounded-lg p-4">
-                <div className="text-sm text-slate-600 mb-2">Correct transcript:</div>
-                <div className="text-slate-800 font-medium">{currentDictation.text}</div>
-              </div>
-
-              {/* Legend */}
-              <div className="flex flex-wrap gap-4 text-xs">
-                <div className="flex items-center space-x-1">
-                  <div className="w-3 h-3 bg-green-100 rounded"></div>
-                  <span>Correct</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <div className="w-3 h-3 bg-yellow-100 rounded"></div>
-                  <span>Close (minor error)</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <div className="w-3 h-3 bg-red-100 rounded"></div>
-                  <span>Incorrect</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <div className="w-3 h-3 bg-purple-100 rounded"></div>
-                  <span>Extra word</span>
-                </div>
-                <div className="flex items-center space-x-1">
-                  <div className="w-3 h-3 bg-gray-100 rounded"></div>
-                  <span>Missing word</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Feedback and suggestions */}
-            <div className="mt-4 space-y-3">
-              <p className="text-slate-700">{feedback.feedback}</p>
-              
-              {feedback.suggestions.length > 0 && (
-                <div>
-                  <span className="text-sm font-medium text-slate-600 block mb-2">Suggestions:</span>
-                  <ul className="text-sm text-slate-700 space-y-1">
-                    {feedback.suggestions.map((suggestion: string, index: number) => (
-                      <li key={index} className="flex items-start space-x-1">
-                        <span className="text-pink-500 mt-1">•</span>
-                        <span>{suggestion}</span>
-                      </li>
+            ) : (
+              <div className="space-y-4">
+                {/* User's answer with character-level feedback */}
+                <div className="bg-slate-50 rounded-lg p-4">
+                  <div className="text-sm text-slate-600 mb-2">Your transcript:</div>
+                  <div className="flex flex-wrap gap-2">
+                    {wordComparison.map((word, wordIndex) => (
+                      <div
+                        key={wordIndex}
+                        className={`inline-flex border-2 rounded-lg p-2 ${getWordBorderColor(word.status)}`}
+                      >
+                        {word.status === 'missing' ? (
+                          <span className="text-gray-500 italic">[missing: {word.correctWord}]</span>
+                        ) : (
+                          word.characters?.map((char: any, charIndex: number) => (
+                            <span
+                              key={charIndex}
+                              className={`px-1 py-0.5 rounded text-sm font-mono ${getCharacterColor(char.status)}`}
+                              title={char.correctChar ? `Should be: ${char.correctChar}` : ''}
+                            >
+                              {char.char || '·'}
+                            </span>
+                          ))
+                        )}
+                      </div>
                     ))}
-                  </ul>
+                  </div>
+                </div>
+
+                {/* Correct answer (if enabled) */}
+                {showCorrectAnswer && (
+                  <div className="bg-green-50 rounded-lg p-4">
+                    <div className="text-sm text-green-700 mb-2">Correct transcript:</div>
+                    <div className="text-green-800 font-medium text-lg">{currentDictation.text}</div>
+                  </div>
+                )}
+
+                {/* Legend */}
+                <div className="flex flex-wrap gap-4 text-xs bg-slate-50 rounded-lg p-3">
+                  <div className="flex items-center space-x-1">
+                    <div className="w-3 h-3 bg-green-100 rounded border border-green-300"></div>
+                    <span>Correct</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-3 h-3 bg-red-100 rounded border border-red-300"></div>
+                    <span>Incorrect</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-3 h-3 bg-purple-100 rounded border border-purple-300"></div>
+                    <span>Extra</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-3 h-3 bg-gray-100 rounded border border-gray-300"></div>
+                    <span>Missing</span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Pronunciation Section */}
+        {showPronunciationSection && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+            <h4 className="text-lg font-semibold text-slate-800 mb-4">Pronunciation Check</h4>
+            
+            <div className="text-center space-y-4">
+              <p className="text-slate-600">Great job on the dictation! Now let's check your pronunciation.</p>
+              
+              <div className="bg-blue-50 rounded-lg p-4">
+                <p className="text-blue-800 font-medium text-lg mb-2">Read this sentence:</p>
+                <p className="text-blue-900 text-xl font-semibold">{currentDictation.text}</p>
+              </div>
+
+              {!isRecording && !pronunciationFeedback ? (
+                <button
+                  onClick={startPronunciationRecording}
+                  className="w-16 h-16 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-full flex items-center justify-center hover:from-blue-700 hover:to-indigo-700 transition-all mx-auto"
+                >
+                  <Mic className="w-6 h-6" />
+                </button>
+              ) : isRecording ? (
+                <div className="flex flex-col items-center space-y-2">
+                  <div className="w-16 h-16 bg-red-500 rounded-full flex items-center justify-center animate-pulse">
+                    <Square className="w-6 h-6 text-white" />
+                  </div>
+                  <p className="text-red-600 font-medium">Recording... Speak clearly</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <h5 className="font-medium text-slate-700">Pronunciation Analysis:</h5>
+                  <div className="bg-slate-50 rounded-lg p-4">
+                    <div className="text-lg">
+                      {renderPronunciationFeedback(currentDictation.text.replace(/[^\w\s]/g, ''), pronunciationFeedback)}
+                    </div>
+                  </div>
+                  <div className="flex justify-center space-x-4 text-xs">
+                    <div className="flex items-center space-x-1">
+                      <div className="w-3 h-3 bg-green-100 rounded"></div>
+                      <span>Correct pronunciation</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <div className="w-3 h-3 bg-red-100 rounded"></div>
+                      <span>Needs improvement</span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>
