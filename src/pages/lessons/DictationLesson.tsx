@@ -93,6 +93,7 @@ const DictationLesson: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [pronunciationFeedback, setPronunciationFeedback] = useState<string>('');
   const [showPronunciationSection, setShowPronunciationSection] = useState(false);
+  const [canProceed, setCanProceed] = useState(false); // New state to control when user can proceed
 
   useEffect(() => {
     if (lesson && !progress) {
@@ -150,6 +151,7 @@ const DictationLesson: React.FC = () => {
     
     setFeedback(aiFeedback);
     setShowFeedback(true);
+    setCanProceed(allWordsCorrect); // Only allow proceeding if all words are correct
     
     // Show pronunciation section if all words are correct and pronunciation is enabled
     if (allWordsCorrect && pronunciationEnabled) {
@@ -171,15 +173,26 @@ const DictationLesson: React.FC = () => {
     if (!lesson.dictationSentences) return;
     
     const correctText = lesson.dictationSentences[currentSentence].text;
-    setShowCorrectAnswer(true);
     setShowFeedback(true);
+    setCanProceed(true); // Allow proceeding after skip
     
-    // Show the correct answer without user input
+    // Show the correct answer when skipping
     setFeedback({
       allCorrect: false,
       skipped: true,
       correctAnswer: correctText
     });
+  };
+
+  const handleTryAgain = () => {
+    // Reset the current sentence to allow user to try again
+    setUserTranscript('');
+    setShowFeedback(false);
+    setFeedback(null);
+    setWordComparison([]);
+    setShowPronunciationSection(false);
+    setPronunciationFeedback('');
+    setCanProceed(false);
   };
 
   const handleNext = () => {
@@ -191,9 +204,9 @@ const DictationLesson: React.FC = () => {
       setPlayCount(0);
       setWordComparison([]);
       setCurrentTime(0);
-      setShowCorrectAnswer(false);
       setShowPronunciationSection(false);
       setPronunciationFeedback('');
+      setCanProceed(false);
     } else {
       navigate(`/dashboard/dictation/${lesson.category}`);
     }
@@ -373,7 +386,7 @@ const DictationLesson: React.FC = () => {
               onChange={(e) => setUserTranscript(e.target.value)}
               placeholder="Type what you hear from the audio..."
               className="w-full h-32 p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent resize-none text-lg"
-              disabled={showFeedback}
+              disabled={showFeedback && canProceed}
             />
 
             {!showFeedback ? (
@@ -396,13 +409,27 @@ const DictationLesson: React.FC = () => {
                 </button>
               </div>
             ) : (
-              <button
-                onClick={handleNext}
-                className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 px-6 rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all duration-200 flex items-center justify-center space-x-2"
-              >
-                <span>{currentSentence < lesson.dictationSentences.length - 1 ? 'Next Sentence' : 'Complete Lesson'}</span>
-                <ArrowRight className="w-5 h-5" />
-              </button>
+              <div className="flex space-x-3">
+                {!canProceed && (
+                  <button
+                    onClick={handleTryAgain}
+                    className="flex-1 bg-gradient-to-r from-orange-600 to-red-600 text-white py-3 px-6 rounded-lg hover:from-orange-700 hover:to-red-700 transition-all duration-200 flex items-center justify-center space-x-2"
+                  >
+                    <RotateCcw className="w-5 h-5" />
+                    <span>Try Again</span>
+                  </button>
+                )}
+                
+                {canProceed && (
+                  <button
+                    onClick={handleNext}
+                    className="w-full bg-gradient-to-r from-green-600 to-emerald-600 text-white py-3 px-6 rounded-lg hover:from-green-700 hover:to-emerald-700 transition-all duration-200 flex items-center justify-center space-x-2"
+                  >
+                    <span>{currentSentence < lesson.dictationSentences.length - 1 ? 'Next Sentence' : 'Complete Lesson'}</span>
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -473,6 +500,17 @@ const DictationLesson: React.FC = () => {
                     <div className="w-3 h-3 bg-gray-100 rounded border border-gray-300"></div>
                     <span>Missing</span>
                   </div>
+                </div>
+
+                {/* Result message */}
+                <div className={`text-center p-3 rounded-lg ${
+                  feedback.allCorrect 
+                    ? 'bg-green-50 text-green-800' 
+                    : 'bg-orange-50 text-orange-800'
+                }`}>
+                  {feedback.allCorrect 
+                    ? '🎉 Perfect! All words are correct!' 
+                    : '📝 Keep practicing! Try to match all words correctly.'}
                 </div>
               </div>
             )}
